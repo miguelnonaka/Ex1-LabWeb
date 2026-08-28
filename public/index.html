@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cadastro de Usuários</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="masthead-left">
+      <p class="eyebrow">Cadastro</p>
+      <h1>Usuários</h1>
+    </div>
+    <div class="masthead-right">
+      Total cadastrado
+      <span class="count" id="userCount">0</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="search">
+      <input type="text" id="searchInput" placeholder="Buscar por nome ou email…" aria-label="Buscar usuários">
+    </div>
+    <select id="generoFilter" aria-label="Filtrar por gênero">
+      <option value="">Todos os gêneros</option>
+      <option value="Masculino">Masculino</option>
+      <option value="Feminino">Feminino</option>
+      <option value="Outro">Outro</option>
+    </select>
+    <button class="btn btn-primary" id="addUserBtn">+ Novo usuário</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>Celular</th>
+        <th>Gênero</th>
+        <th style="text-align:right;">Ações</th>
+      </tr>
+    </thead>
+    <tbody id="userTableBody"></tbody>
+  </table>
+
+  <div class="empty-state" id="emptyState" style="display:none;">
+    <span class="glyph">＋</span>
+    Ninguém encontrado.<br>Tente outro termo de busca ou limpe o filtro.
+  </div>
+</div>
+
+<!-- Add / Edit modal -->
+<div class="overlay" id="formOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+    <h2 id="formTitle">Novo usuário</h2>
+    <p class="sub" id="formSub">Novo registro no cadastro</p>
+    <form id="userForm" novalidate>
+      <input type="hidden" id="userId">
+      <div class="field-row">
+        <div class="field" id="field-nome">
+          <label for="nomeInput">Nome</label>
+          <input type="text" id="nomeInput" autocomplete="off">
+          <div class="error">Informe o nome.</div>
+        </div>
+        <div class="field" id="field-sobrenome">
+          <label for="sobrenomeInput">Sobrenome</label>
+          <input type="text" id="sobrenomeInput" autocomplete="off">
+          <div class="error">Informe o sobrenome.</div>
+        </div>
+      </div>
+      <div class="field" id="field-email">
+        <label for="emailInput">Email</label>
+        <input type="email" id="emailInput" autocomplete="off">
+        <div class="error">Informe um email válido.</div>
+      </div>
+      <div class="field" id="field-celular">
+        <label for="celularInput">Celular</label>
+        <input type="tel" id="celularInput" autocomplete="off" placeholder="12412458">
+        <div class="error">Informe um número de celular.</div>
+      </div>
+      <div class="field">
+        <label for="generoInput">Gênero</label>
+        <select id="generoInput">
+          <option value="Masculino">Masculino</option>
+          <option value="Feminino">Feminino</option>
+          <option value="Outro">Outro</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="cancelFormBtn">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="saveBtn">Salvar usuário</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete confirm -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle">Remover usuário</h2>
+    <p>Isso remove <strong id="confirmName"></strong> do cadastro. Essa ação não pode ser desfeita.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="cancelDeleteBtn">Cancelar</button>
+      <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Remover</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Data ------------------------------------------------------------
+  let users = [];
+
+  let editingId = null;
+  let deletingId = null;
+  let search = "";
+  let generoFilterVal = "";
+
+  // ---- Elements --------------------------------------------------------
+  const tbody = document.getElementById("userTableBody");
+  const emptyState = document.getElementById("emptyState");
+  const userCount = document.getElementById("userCount");
+  const searchInput = document.getElementById("searchInput");
+  const generoFilter = document.getElementById("generoFilter");
+
+  const formOverlay = document.getElementById("formOverlay");
+  const userForm = document.getElementById("userForm");
+  const formTitle = document.getElementById("formTitle");
+  const formSub = document.getElementById("formSub");
+  const nomeInput = document.getElementById("nomeInput");
+  const sobrenomeInput = document.getElementById("sobrenomeInput");
+  const emailInput = document.getElementById("emailInput");
+  const celularInput = document.getElementById("celularInput");
+  const generoInput = document.getElementById("generoInput");
+
+  const confirmOverlay = document.getElementById("confirmOverlay");
+  const confirmName = document.getElementById("confirmName");
+
+  const AVATAR_COLORS = ["#3a5a49", "#a8532f", "#5c6f8f", "#8a6a45", "#5c4a6e"];
+
+  function initials(nome, sobrenome) {
+    return ((nome[0] || "") + (sobrenome[0] || "")).toUpperCase();
+  }
+
+  function avatarColor(id) {
+    let sum = 0;
+    for (let i = 0; i < id.length; i++) sum += id.charCodeAt(i);
+    return AVATAR_COLORS[sum % AVATAR_COLORS.length];
+  }
+
+  function fullName(u) { return `${u.nome} ${u.sobrenome}`; }
+
+  function fromApi(user) {
+    return {
+      id: user._id,
+      nome: user.Nome || "",
+      sobrenome: user.Sobrenome || "",
+      email: user.Email || "",
+      celular: user.Celular || "",
+      genero: user.Genero || "Outro"
+    };
+  }
+
+  async function requestUsers(path, options) {
+    const response = await fetch(`/users${path}`, options);
+    if (!response.ok) throw new Error("Não foi possível concluir a operação.");
+    return response.status === 204 ? null : response.json();
+  }
+
+  function apiPayload(payload) {
+    return {
+      Nome: payload.nome,
+      Sobrenome: payload.sobrenome,
+      Email: payload.email,
+      Celular: payload.celular,
+      Genero: payload.genero
+    };
+  }
+
+  // ---- READ / render -----------------------------------------------------
+  function render() {
+    const q = search.trim().toLowerCase();
+    const filtered = users.filter(u => {
+      const matchesSearch = !q || fullName(u).toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+      const matchesGenero = !generoFilterVal || u.genero === generoFilterVal;
+      return matchesSearch && matchesGenero;
+    });
+
+    userCount.textContent = users.length;
+    tbody.innerHTML = "";
+
+    if (filtered.length === 0) {
+      emptyState.style.display = "block";
+    } else {
+      emptyState.style.display = "none";
+      filtered.forEach(u => tbody.appendChild(buildRow(u)));
+    }
+  }
+
+  function buildRow(u) {
+    const tr = document.createElement("tr");
+    tr.className = "row-enter";
+    tr.dataset.id = u.id;
+
+    tr.innerHTML = `
+      <td>
+        <div class="name-cell">
+          <div class="avatar" style="background:${avatarColor(u.id)}">${initials(u.nome, u.sobrenome)}</div>
+          <div class="name-block">
+            <strong>${escapeHtml(fullName(u))}</strong>
+            <span>${escapeHtml(u.email)}</span>
+          </div>
+        </div>
+      </td>
+      <td><span class="cell-muted">${escapeHtml(u.celular)}</span></td>
+      <td><span class="pill genero-${u.genero}">${escapeHtml(u.genero)}</span></td>
+      <td>
+        <div class="row-actions">
+          <button class="btn-text" data-action="edit" data-id="${u.id}">Editar</button>
+          <button class="btn-text danger" data-action="delete" data-id="${u.id}">Remover</button>
+        </div>
+      </td>
+    `;
+    return tr;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ---- CREATE / UPDATE form ------------------------------------------
+  function openForm(user) {
+    editingId = user ? user.id : null;
+    userForm.reset();
+    clearErrors();
+
+    if (user) {
+      formTitle.textContent = "Editar usuário";
+      formSub.textContent = "Atualizando um registro existente";
+      nomeInput.value = user.nome;
+      sobrenomeInput.value = user.sobrenome;
+      emailInput.value = user.email;
+      celularInput.value = user.celular;
+      generoInput.value = user.genero;
+    } else {
+      formTitle.textContent = "Novo usuário";
+      formSub.textContent = "Novo registro no cadastro";
+      generoInput.value = "Masculino";
+    }
+
+    formOverlay.classList.add("open");
+    nomeInput.focus();
+  }
+
+  function closeForm() {
+    formOverlay.classList.remove("open");
+    editingId = null;
+  }
+
+  function clearErrors() {
+    ["nome", "sobrenome", "email", "celular"].forEach(f =>
+      document.getElementById("field-" + f).classList.remove("invalid")
+    );
+  }
+
+  function validate() {
+    let ok = true;
+    clearErrors();
+
+    if (!nomeInput.value.trim()) {
+      document.getElementById("field-nome").classList.add("invalid");
+      ok = false;
+    }
+    if (!sobrenomeInput.value.trim()) {
+      document.getElementById("field-sobrenome").classList.add("invalid");
+      ok = false;
+    }
+
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput.value.trim());
+    if (!emailOk) {
+      document.getElementById("field-email").classList.add("invalid");
+      ok = false;
+    }
+
+    const celularOk = /^[0-9()+\-\s]{8,}$/.test(celularInput.value.trim());
+    if (!celularOk) {
+      document.getElementById("field-celular").classList.add("invalid");
+      ok = false;
+    }
+
+    return ok;
+  }
+
+  userForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    if (!validate()) return;
+
+    const payload = {
+      nome: nomeInput.value.trim(),
+      sobrenome: sobrenomeInput.value.trim(),
+      email: emailInput.value.trim(),
+      celular: celularInput.value.trim(),
+      genero: generoInput.value
+    };
+
+    try {
+      if (editingId) {
+        await requestUsers(`/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(apiPayload(payload))
+        });
+        toast(`Alterações salvas para ${payload.nome}`);
+      } else {
+        await requestUsers("/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(apiPayload(payload))
+        });
+        toast(`${payload.nome} adicionado`);
+      }
+      closeForm();
+      await loadUsers();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  document.getElementById("addUserBtn").addEventListener("click", () => openForm(null));
+  document.getElementById("cancelFormBtn").addEventListener("click", closeForm);
+  formOverlay.addEventListener("click", (e) => { if (e.target === formOverlay) closeForm(); });
+
+  // ---- DELETE ------------------------------------------------------------
+  function openConfirm(user) {
+    deletingId = user.id;
+    confirmName.textContent = fullName(user);
+    confirmOverlay.classList.add("open");
+  }
+
+  function closeConfirm() {
+    confirmOverlay.classList.remove("open");
+    deletingId = null;
+  }
+
+  document.getElementById("cancelDeleteBtn").addEventListener("click", closeConfirm);
+  confirmOverlay.addEventListener("click", (e) => { if (e.target === confirmOverlay) closeConfirm(); });
+
+  document.getElementById("confirmDeleteBtn").addEventListener("click", async function () {
+    const u = users.find(x => x.id === deletingId);
+    try {
+      await requestUsers(`/${deletingId}`, { method: "DELETE" });
+      closeConfirm();
+      await loadUsers();
+      if (u) toast(`${fullName(u)} removido`);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  // ---- Row action delegation --------------------------------------------
+  tbody.addEventListener("click", function (e) {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const user = users.find(x => x.id === id);
+    if (!user) return;
+
+    if (btn.dataset.action === "edit") openForm(user);
+    if (btn.dataset.action === "delete") openConfirm(user);
+  });
+
+  // ---- Search / filter -----------------------------------------------
+  searchInput.addEventListener("input", (e) => { search = e.target.value; render(); });
+  generoFilter.addEventListener("change", (e) => { generoFilterVal = e.target.value; render(); });
+
+  // ---- Toasts -----------------------------------------------------------
+  function toast(message) {
+    const stack = document.getElementById("toastStack");
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = message;
+    stack.appendChild(el);
+    setTimeout(() => el.remove(), 2600);
+  }
+
+  // ---- Keyboard: Esc closes open modal -----------------------------------
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (formOverlay.classList.contains("open")) closeForm();
+      if (confirmOverlay.classList.contains("open")) closeConfirm();
+    }
+  });
+
+  async function loadUsers() {
+    try {
+      const data = await requestUsers("/");
+      users = data.map(fromApi);
+      render();
+    } catch (error) {
+      users = [];
+      render();
+      toast(error.message);
+    }
+  }
+
+  loadUsers();
+})();
+</script>
+
+</body>
+</html>

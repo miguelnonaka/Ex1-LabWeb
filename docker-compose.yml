@@ -1,0 +1,9 @@
+services:
+  app:
+    build: . 
+    container_name: Ex1-LabWeb
+    ports:
+      - "3067:3067"
+    environment:
+      PORT: 3067
+      MONGO_URI: "mongodb+srv://FatecUser:Fatec123@cluster0.cyyywcs.mongodb.net/?appName=Cluster0"
